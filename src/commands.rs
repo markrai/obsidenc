@@ -10,6 +10,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use chacha20poly1305::XChaCha20Poly1305;
+use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
 pub fn run(cli: Cli) -> Result<(), Error> {
@@ -85,7 +86,8 @@ fn prompt_password(confirm: bool) -> Result<Zeroizing<Vec<u8>>, Error> {
             std::io::Error::new(std::io::ErrorKind::Other, "password input failed")
         })?;
         let pw2 = Zeroizing::new(pw2.into_bytes());
-        if pw.as_slice() != pw2.as_slice() {
+        // Use constant-time comparison to prevent timing side-channel attacks
+        if !bool::from(pw.as_slice().ct_eq(pw2.as_slice())) {
             return Err(Error::PasswordPolicy("passwords did not match"));
         }
     }

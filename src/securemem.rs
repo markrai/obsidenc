@@ -1,4 +1,5 @@
 use crate::error::Error;
+use std::fmt;
 use std::ops::{Deref, DerefMut};
 use zeroize::Zeroize;
 
@@ -10,6 +11,12 @@ use zeroize::Zeroize;
 ///
 /// This struct owns the data it locks to guarantee lifetime safety.
 /// The guard pattern ensures the locked data is the data being used.
+///
+/// # Reallocation Safety
+///
+/// If `T` is a `Vec<u8>`, avoid calling methods that could trigger reallocation
+/// (e.g., `push`, `extend`, `reserve`) as this could leave old copies in heap memory.
+/// In practice, the data is typically not mutated after creation, making this safe.
 pub struct MemoryLock<T: AsRef<[u8]> + Zeroize> {
     data: T,
     locked: bool,
@@ -54,6 +61,15 @@ impl<T: AsRef<[u8]> + Zeroize> Drop for MemoryLock<T> {
         }
         // Zeroize the data before dropping
         self.data.zeroize();
+    }
+}
+
+impl<T: AsRef<[u8]> + Zeroize> fmt::Debug for MemoryLock<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MemoryLock")
+            .field("locked", &self.locked)
+            .field("data", &"***REDACTED***")
+            .finish()
     }
 }
 
