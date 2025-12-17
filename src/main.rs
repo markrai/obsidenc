@@ -5,11 +5,11 @@
 //!
 //! Design choices prioritize minimizing plaintext exposure and defensive parsing over convenience.
 
-mod aead;
+// Import library modules
+use obsidenc::*;
+
 mod cli;
 mod commands;
-mod error;
-mod format;
 mod kdf;
 mod securemem;
 mod vaulttar;

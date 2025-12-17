@@ -1,7 +1,5 @@
-use crate::aead;
+use obsidenc::{aead, error::Error, format::{Header, HEADER_LEN}};
 use crate::cli::{Cli, Command};
-use crate::error::Error;
-use crate::format::{Header, HEADER_LEN};
 use crate::kdf;
 use crate::securemem::MemoryLock;
 use crate::vaulttar;

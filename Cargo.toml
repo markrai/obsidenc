@@ -1,8 +1,12 @@
 [package]
 name = "obsidenc"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2021"
 license = "GPL-3.0"
+
+[lib]
+name = "obsidenc"
+path = "src/lib.rs"
 
 [dependencies]
 argon2 = { version = "0.5", default-features = true }

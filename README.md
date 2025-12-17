@@ -1,7 +1,7 @@
 <img width="256" height="256" alt="image-removebg-preview (3)" src="https://github.com/user-attachments/assets/c870f10a-206f-4387-b479-45c7346b418b" />
 
 
-# obsidenc v0.1.8
+# obsidenc v0.1.9
 
 Paranoid-grade encryption utility. It tars a directory (no compression) and encrypts/decrypts it with Argon2id (RFC 9106 guidance) + XChaCha20-Poly1305. See [ANALYSIS.md](https://github.com/markrai/obsidenc/edit/master/ANALYSIS.md) for full details.
 
@@ -63,3 +63,24 @@ Install and run:
 cargo install cargo-audit
 cargo audit
 ```
+
+## Fuzzing
+
+The project includes fuzzing infrastructure to verify robustness against malformed input. Fuzzing helps ensure that the decryption parser never panics on invalid data.
+
+**Platform Support:** Fuzzing is only available on Linux/Unix. The fuzzing targets are automatically disabled on Windows (libfuzzer-sys doesn't support Windows). The main obsidenc binary works perfectly on Windows - only the fuzzing infrastructure is platform-limited.
+
+To run fuzzing (Linux/Unix only):
+
+```sh
+cargo install cargo-fuzz
+cargo fuzz run fuzz_decrypt
+```
+
+The fuzzing target (`fuzz/fuzz_targets/fuzz_decrypt.rs`) tests:
+- Header parsing with malformed input
+- Chunk parsing with invalid lengths and data
+- Buffer handling edge cases
+- Ensures all errors are returned as `Result::Err`, never panics
+
+**Windows Users:** If you need to run fuzzing, use WSL (Windows Subsystem for Linux) or a Linux VM. The main encryption/decryption functionality works natively on Windows.
