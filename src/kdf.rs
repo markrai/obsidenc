@@ -180,10 +180,21 @@ pub fn read_keyfile(path: &std::path::Path) -> Result<Zeroizing<Vec<u8>>, Error>
         }
     }
     
-    // Read raw bytes: no trimming, no processing
-    // std::fs::read reads the entire file as-is, including any trailing newlines
-    let bytes = std::fs::read(path)?;
-    Ok(Zeroizing::new(bytes))
+    // Pre-allocate exact size in Zeroizing wrapper to avoid reallocation
+    // This prevents transient heap exposure during Vec growth
+    // std::fs::read() uses read_to_end() which can reallocate, leaving
+    // keyfile data in freed (non-zeroized) heap memory
+    let mut file = std::fs::File::open(path)?;
+    let file_size = meta.len() as usize;
+    
+    // Allocate exact size in Zeroizing wrapper (no reallocation)
+    let mut buffer = Zeroizing::new(vec![0u8; file_size]);
+    
+    // Read directly into the secure buffer (no intermediate copies)
+    use std::io::Read;
+    file.read_exact(&mut buffer)?;
+    
+    Ok(buffer)
 }
 
 fn build_kdf_input(password: &[u8], keyfile: Option<&[u8]>) -> Result<Zeroizing<Vec<u8>>, Error> {
