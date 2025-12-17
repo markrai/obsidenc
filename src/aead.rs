@@ -7,14 +7,15 @@ use sha2::Sha256;
 const CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks
 
 /// Derive a chunk nonce from the nonce key and chunk index.
-pub fn derive_chunk_nonce(nonce_key: &[u8; 32], chunk_index: u64) -> [u8; NONCE_LEN] {
+pub fn derive_chunk_nonce(nonce_key: &[u8; 32], chunk_index: u64) -> Result<[u8; NONCE_LEN], Error> {
     let hk = Hkdf::<Sha256>::new(None, nonce_key);
     let mut info = Vec::with_capacity(24);
     info.extend_from_slice(&chunk_index.to_le_bytes());
     info.extend_from_slice(&[0u8; 16]); // 16 zero bytes to pad to 24
     let mut nonce = [0u8; NONCE_LEN];
-    hk.expand(&info, &mut nonce).expect("HKDF expansion failed");
-    nonce
+    hk.expand(&info, &mut nonce)
+        .map_err(|_| Error::Crypto)?;
+    Ok(nonce)
 }
 
 /// Build AAD for a chunk: header_bytes || chunk_index || is_final

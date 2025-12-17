@@ -262,12 +262,12 @@ pub fn derive_master_key(
 /// Domain: "obsidenc\0enc"
 const ENC_KEY_INFO: &[u8] = b"obsidenc\0enc";
 
-pub fn derive_encryption_key(master_key: &[u8; 32]) -> Zeroizing<[u8; 32]> {
+pub fn derive_encryption_key(master_key: &[u8; 32]) -> Result<Zeroizing<[u8; 32]>, Error> {
     let hk = Hkdf::<Sha256>::new(None, master_key);
     let mut okm = Zeroizing::new([0u8; 32]);
     hk.expand(ENC_KEY_INFO, &mut *okm)
-        .expect("HKDF expansion failed");
-    okm
+        .map_err(|_| Error::Crypto)?;
+    Ok(okm)
 }
 
 /// Derive nonce key from master key using HKDF with domain separation.
@@ -275,11 +275,11 @@ pub fn derive_encryption_key(master_key: &[u8; 32]) -> Zeroizing<[u8; 32]> {
 /// This key is used to derive per-chunk nonces.
 const NONCE_KEY_INFO: &[u8] = b"obsidenc\0nonce";
 
-pub fn derive_nonce_key(master_key: &[u8; 32]) -> Zeroizing<[u8; 32]> {
+pub fn derive_nonce_key(master_key: &[u8; 32]) -> Result<Zeroizing<[u8; 32]>, Error> {
     let hk = Hkdf::<Sha256>::new(None, master_key);
     let mut okm = Zeroizing::new([0u8; 32]);
     hk.expand(NONCE_KEY_INFO, &mut *okm)
-        .expect("HKDF expansion failed");
-    okm
+        .map_err(|_| Error::Crypto)?;
+    Ok(okm)
 }
 

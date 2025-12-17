@@ -142,7 +142,10 @@ fn sanitize_tar_path(p: &Path) -> Result<PathBuf, Error> {
     for comp in p.components() {
         match comp {
             Component::Normal(s) => out.push(s),
-            Component::CurDir => return Err(Error::Format("tar path contains '.'")),
+            Component::CurDir => {
+                // Strip leading './' from paths (common in standard tarballs)
+                // This is safe as it doesn't change the path meaning
+            }
             Component::ParentDir => return Err(Error::Format("tar path contains '..'")),
             Component::RootDir | Component::Prefix(_) => {
                 return Err(Error::Format("tar path is absolute"))

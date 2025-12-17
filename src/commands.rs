@@ -130,7 +130,7 @@ impl EncryptingWriter {
             return Ok(());
         }
 
-        let chunk_nonce = aead::derive_chunk_nonce(&*self.nonce_key, self.chunk_index);
+        let chunk_nonce = aead::derive_chunk_nonce(&*self.nonce_key, self.chunk_index)?;
         let aad = aead::build_chunk_aad(&self.header_bytes, self.chunk_index, is_final);
 
         let chunk_ciphertext = aead::encrypt_chunk(
@@ -221,9 +221,9 @@ pub fn encrypt(
     let _master_key_lock = MemoryLock::lock(master_key.as_ref());
 
     // Derive subkeys from master key with domain separation
-    let enc_key = kdf::derive_encryption_key(&*master_key);
+    let enc_key = kdf::derive_encryption_key(&*master_key)?;
     let _enc_key_lock = MemoryLock::lock(&*enc_key);
-    let nonce_key = kdf::derive_nonce_key(&*master_key);
+    let nonce_key = kdf::derive_nonce_key(&*master_key)?;
     let _nonce_key_lock = MemoryLock::lock(&*nonce_key);
 
     let header = Header {
@@ -306,9 +306,9 @@ pub fn decrypt(
     let _master_key_lock = MemoryLock::lock(master_key.as_ref());
 
     // Derive subkeys from master key with domain separation
-    let enc_key = kdf::derive_encryption_key(&*master_key);
+    let enc_key = kdf::derive_encryption_key(&*master_key)?;
     let _enc_key_lock = MemoryLock::lock(&*enc_key);
-    let nonce_key = kdf::derive_nonce_key(&*master_key);
+    let nonce_key = kdf::derive_nonce_key(&*master_key)?;
     let _nonce_key_lock = MemoryLock::lock(&*nonce_key);
 
     // Create cipher from encryption key
@@ -465,7 +465,7 @@ impl StreamingDecryptReader {
         let mut chunk_ciphertext = vec![0u8; chunk_ciphertext_len];
         self.file.read_exact(&mut chunk_ciphertext)?;
 
-        let chunk_nonce = aead::derive_chunk_nonce(&*self.nonce_key, self.chunk_index);
+        let chunk_nonce = aead::derive_chunk_nonce(&*self.nonce_key, self.chunk_index)?;
         let aad = aead::build_chunk_aad(&self.header_bytes, self.chunk_index, is_final);
 
         // Decrypt chunk (this verifies authentication)
