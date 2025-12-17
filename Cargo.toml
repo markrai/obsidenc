@@ -1,6 +1,6 @@
 [package]
 name = "obsidenc"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 license = "GPL-3.0"
 
@@ -14,6 +14,7 @@ tar = "0.4"
 thiserror = "1.0"
 zeroize = { version = "1.8", features = ["std"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
+ctrlc = "3.4"
 
 # RustCrypto primitives
 chacha20poly1305 = "0.10"

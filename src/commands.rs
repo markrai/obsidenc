@@ -9,9 +9,38 @@ use rand_core::{OsRng, RngCore};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use chacha20poly1305::XChaCha20Poly1305;
 use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
+
+/// Global flag to track if user has requested interruption (Ctrl+C)
+static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+
+/// Set up signal handlers for graceful cleanup on interrupt.
+/// When Ctrl+C is pressed, this allows Drop implementations to run,
+/// ensuring MemoryLock and Zeroize clean up secrets properly.
+pub fn setup_signal_handlers() -> Result<(), Error> {
+    ctrlc::set_handler(|| {
+        INTERRUPTED.store(true, Ordering::SeqCst);
+        eprintln!("\n⚠️  Interrupt received. Cleaning up secrets and exiting...");
+    })
+    .map_err(|e| Error::Io(std::io::Error::new(
+        std::io::ErrorKind::Other,
+        format!("failed to set signal handler: {}", e),
+    )))?;
+    Ok(())
+}
+
+/// Check if user has requested interruption.
+/// Returns Error::Interrupted if interrupt was requested, allowing
+/// stack unwinding to trigger Drop implementations.
+fn check_interrupted() -> Result<(), Error> {
+    if INTERRUPTED.load(Ordering::SeqCst) {
+        return Err(Error::Interrupted);
+    }
+    Ok(())
+}
 
 pub fn run(cli: Cli) -> Result<(), Error> {
     match cli.command {
@@ -156,6 +185,8 @@ impl EncryptingWriter {
 
     /// Encrypt and write the current buffer as a chunk.
     fn flush_chunk(&mut self, is_final: bool) -> Result<(), Error> {
+        check_interrupted()?;
+        
         if self.buffer.is_empty() {
             return Ok(());
         }
@@ -187,6 +218,11 @@ impl Write for EncryptingWriter {
         let mut remaining = buf;
 
         while !remaining.is_empty() {
+            // Check for interruption before processing each chunk
+            if let Err(e) = check_interrupted() {
+                return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, format!("{}", e)));
+            }
+            
             let available = aead::CHUNK_SIZE_BYTES - self.buffer.len();
             if available == 0 {
                 // Buffer is full, encrypt and write this chunk
@@ -275,9 +311,11 @@ pub fn encrypt(
     let base_nonce = kdf::random_nonce();
 
     // Derive master key from password/keyfile
+    check_interrupted()?;
     let master_key = MemoryLock::new(kdf::derive_master_key(password, keyfile_bytes, &salt, params)?);
 
     // Derive subkeys from master key with domain separation (using locked master_key)
+    check_interrupted()?;
     let enc_key = MemoryLock::new(kdf::derive_encryption_key(&**master_key)?);
     let nonce_key = MemoryLock::new(kdf::derive_nonce_key(&**master_key)?);
 
@@ -308,6 +346,7 @@ pub fn encrypt(
     let cipher = aead::create_cipher(&**enc_key);
 
     // Write header directly (unencrypted)
+    check_interrupted()?;
     let mut out = open_new_file(&output_file, force)?;
     out.write_all(&header_bytes)?;
 
@@ -320,6 +359,7 @@ pub fn encrypt(
     );
 
     // Stream tar archive directly to encryption writer (no buffering)
+    check_interrupted()?;
     {
         let mut builder = tar::Builder::new(&mut encrypting_writer);
         vaulttar::append_vault_dir(&mut builder, vault_dir)?;
@@ -327,6 +367,7 @@ pub fn encrypt(
     }
 
     // Flush any remaining data as final chunk
+    check_interrupted()?;
     encrypting_writer.flush()?;
     eprintln!("Encryption successful: {}", output_file.display());
     Ok(())
@@ -373,9 +414,11 @@ pub fn decrypt(
     let header = Header::parse(&header_buf)?;
 
     // Derive master key from password/keyfile
+    check_interrupted()?;
     let master_key = MemoryLock::new(kdf::derive_master_key(password, keyfile_bytes, &header.salt, header.argon2)?);
 
     // Verify token early, providing immediate password feedback
+    check_interrupted()?;
     let token_nonce = aead::derive_verification_token_nonce(&header.nonce)?;
     let token_cipher = aead::create_cipher(&**master_key);
     aead::verify_token(
@@ -386,6 +429,7 @@ pub fn decrypt(
     )?;
 
     // Derive subkeys from master key with domain separation (using locked master_key)
+    check_interrupted()?;
     let enc_key = MemoryLock::new(kdf::derive_encryption_key(&**master_key)?);
     let nonce_key = MemoryLock::new(kdf::derive_nonce_key(&**master_key)?);
 
@@ -397,6 +441,7 @@ pub fn decrypt(
     let mut staging_cleanup = StagingCleanup::new(&staging, secure_delete);
 
     // Stream decrypt chunks directly to tar extractor (auth-first, no memory accumulation)
+    check_interrupted()?;
     let decrypt_reader = StreamingDecryptReader::new(
         f,
         meta.len(),
@@ -404,6 +449,7 @@ pub fn decrypt(
         nonce_key,
         header_buf,
     )?;
+    check_interrupted()?;
     vaulttar::extract_to_dir(decrypt_reader, &staging)?;
 
     // If output directory exists and is non-empty, handle it
@@ -587,6 +633,8 @@ impl StreamingDecryptReader {
     }
 
     fn load_next_chunk(&mut self) -> Result<(), Error> {
+        check_interrupted()?;
+        
         if self.eof {
             return Ok(());
         }
@@ -653,6 +701,8 @@ impl StreamingDecryptReader {
             self.eof = true;
         }
 
+        // Check for interruption after processing chunk
+        check_interrupted()?;
         Ok(())
     }
 }

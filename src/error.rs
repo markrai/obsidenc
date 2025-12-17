@@ -32,4 +32,7 @@ pub enum Error {
 
     #[error("password policy violation: {0}")]
     PasswordPolicy(&'static str),
+
+    #[error("operation interrupted by user")]
+    Interrupted,
 }
