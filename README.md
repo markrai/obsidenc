@@ -1,7 +1,7 @@
 <img width="256" height="256" alt="image-removebg-preview (3)" src="https://github.com/user-attachments/assets/c870f10a-206f-4387-b479-45c7346b418b" />
 
 
-# obsidenc v0.1.10
+# obsidenc v0.1.11
 
 Paranoid-grade encryption utility. It tars a directory (no compression) and encrypts/decrypts it with Argon2id (RFC 9106 guidance) + XChaCha20-Poly1305. See [ANALYSIS.md](https://github.com/markrai/obsidenc/edit/master/ANALYSIS.md) for full details.
 
@@ -130,5 +130,40 @@ cargo fuzz run fuzz_decrypt -- -merge=1
 - Chunk parsing with invalid lengths and data
 - Buffer handling edge cases (empty chunks, oversized chunks, etc.)
 - Ensures all errors are returned as `Result::Err`, never panics
+
+**Improving Fuzzing Coverage:**
+
+The fuzzer automatically constructs valid headers to test chunk parsing logic, but you can improve coverage by adding seed corpus files. Seed corpus files are real encrypted files that help the fuzzer discover valid input patterns.
+
+**Creating a Seed Corpus:**
+
+1. Create some test encrypted files:
+   ```sh
+   # Create a test directory
+   mkdir -p /tmp/test_vault
+   echo "test content" > /tmp/test_vault/test.txt
+   
+   # Encrypt it
+   ./target/release/obsidenc encrypt /tmp/test_vault /tmp/test.oen
+   
+   # Copy to seed corpus
+   cp /tmp/test.oen fuzz/corpus/fuzz_decrypt/seed_001.oen
+   ```
+
+2. The fuzzer will automatically use files in `fuzz/corpus/fuzz_decrypt/` as starting points.
+
+3. You can add multiple seed files with different characteristics:
+   - Small files (empty or single byte)
+   - Large files (multi-chunk)
+   - Files with various directory structures
+   - Files encrypted with different Argon2 parameters
+
+**Fuzzing Strategy:**
+
+The improved fuzzer uses a dual-mode approach:
+- **Mode 1**: Tests raw header parsing to find edge cases in error handling
+- **Mode 2**: Constructs valid headers with random data to test chunk parsing logic
+
+This ensures coverage of both error paths and the actual decryption code paths.
 
 **Windows Users:** If you need to run fuzzing, use WSL (Windows Subsystem for Linux) or a Linux VM. The main encryption/decryption functionality works natively on Windows.
