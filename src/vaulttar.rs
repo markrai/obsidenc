@@ -2,14 +2,35 @@ use crate::error::Error;
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
 
-fn mtime_secs(meta: &fs::Metadata) -> u64 {
-    meta.modified()
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+/// Scrub metadata from TAR header to prevent privacy leaks.
+/// This removes timestamps, ownership, and device information that could
+/// reveal system details, usernames, or activity timelines.
+fn scrub_metadata(header: &mut tar::Header) {
+    // Always scrub timestamp to prevent timeline reconstruction
+    header.set_mtime(0);
+    
+    // Scrub ownership metadata (Unix-specific)
+    #[cfg(unix)]
+    {
+        // Scrub UID/GID to prevent username/group identification
+        header.set_uid(0);
+        header.set_gid(0);
+        
+        // Scrub username/groupname strings (GNU tar extension)
+        // Use as_gnu_mut() to access GNU-specific fields
+        if let Some(gnu_header) = header.as_gnu_mut() {
+            // Set to "root" to provide generic, non-identifying values
+            // These are byte arrays in GNU tar format
+            let _ = gnu_header.set_uname(b"root");
+            let _ = gnu_header.set_gname(b"root");
+        }
+        
+        // Scrub device IDs (for device files, though we reject them)
+        // Setting to 0 is safe and prevents any device information leakage
+        header.set_device_major(0);
+        header.set_device_minor(0);
+    }
 }
 
 fn archive_path(base: &Path, path: &Path) -> Result<PathBuf, Error> {
@@ -77,7 +98,8 @@ fn walk<W: io::Write>(
             let mut header = tar::Header::new_gnu();
             header.set_entry_type(tar::EntryType::Directory);
             header.set_size(0);
-            header.set_mtime(mtime_secs(&meta));
+            // Scrub all metadata to prevent privacy leaks (timestamps, ownership, etc.)
+            scrub_metadata(&mut header);
             // Set safe permissions: directories get 0o755, but we sanitize on extract
             #[cfg(unix)]
             {
@@ -114,7 +136,8 @@ fn walk<W: io::Write>(
         let mut header = tar::Header::new_gnu();
         header.set_entry_type(tar::EntryType::Regular);
         header.set_size(meta.len());
-        header.set_mtime(mtime_secs(&meta));
+        // Scrub all metadata to prevent privacy leaks (timestamps, ownership, etc.)
+        scrub_metadata(&mut header);
         // Preserve file permissions but they'll be sanitized on extract
         #[cfg(unix)]
         {

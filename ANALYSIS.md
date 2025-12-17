@@ -88,6 +88,7 @@
 - File count limits (1 million files, zip-bomb protection)
 - Permission sanitization on extract (removes executable bits, setuid/setgid)
 - Safe path sanitization (strips leading "./", rejects ".." and absolute paths for security)
+- Metadata scrubbing on archive creation (removes timestamps, ownership, device IDs to prevent privacy leaks)
 
 ### Platform Support
 
