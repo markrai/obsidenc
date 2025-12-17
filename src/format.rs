@@ -2,18 +2,16 @@ use crate::error::Error;
 use subtle::ConstantTimeEq;
 
 pub const MAGIC: [u8; 8] = *b"OBSIDENC";
-pub const VERSION_V1: u8 = 1;
-pub const VERSION_V2: u8 = 2;
+pub const VERSION: u8 = 2;
 
 pub const SALT_LEN: usize = 16;
 pub const NONCE_LEN: usize = 24;
 
 pub const ARGON_PARAMS_LEN: usize = 16;
-pub const HEADER_LEN: usize = 8 + 1 + SALT_LEN + ARGON_PARAMS_LEN + NONCE_LEN;
-
-// Verification token for early password validation (V2+)
+// Verification token for early password validation
 pub const VERIFICATION_TOKEN_PLAINTEXT: &[u8] = b"OBSIDENC_VERIFY";
 pub const VERIFICATION_TOKEN_LEN: usize = 16; // XChaCha20-Poly1305 ciphertext size for 14-byte plaintext
+pub const HEADER_LEN: usize = 8 + 1 + SALT_LEN + ARGON_PARAMS_LEN + NONCE_LEN + VERIFICATION_TOKEN_LEN;
 
 // Argon2 variant identifiers (for documentation and future extensibility)
 #[allow(dead_code)]
@@ -139,35 +137,23 @@ pub struct Header {
     pub salt: [u8; SALT_LEN],
     pub argon2: Argon2Params,
     pub nonce: [u8; NONCE_LEN],
-    /// Encrypted verification token (V2+ only, None for V1)
-    pub verification_token: Option<[u8; VERIFICATION_TOKEN_LEN]>,
+    /// Encrypted verification token for early password validation
+    pub verification_token: [u8; VERIFICATION_TOKEN_LEN],
 }
 
 impl Header {
-    pub fn encode_v1(&self) -> Vec<u8> {
+    pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(HEADER_LEN);
         out.extend_from_slice(&MAGIC);
-        out.push(VERSION_V1);
+        out.push(VERSION);
         out.extend_from_slice(&self.salt);
         out.extend_from_slice(&self.argon2.encode());
         out.extend_from_slice(&self.nonce);
+        out.extend_from_slice(&self.verification_token);
         out
     }
 
-    pub fn encode_v2(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(HEADER_LEN + VERIFICATION_TOKEN_LEN);
-        out.extend_from_slice(&MAGIC);
-        out.push(VERSION_V2);
-        out.extend_from_slice(&self.salt);
-        out.extend_from_slice(&self.argon2.encode());
-        out.extend_from_slice(&self.nonce);
-        if let Some(token) = &self.verification_token {
-            out.extend_from_slice(token);
-        }
-        out
-    }
-
-    pub fn parse_v1(buf: &[u8]) -> Result<Self, Error> {
+    pub fn parse(buf: &[u8]) -> Result<Self, Error> {
         if buf.len() != HEADER_LEN {
             return Err(Error::Format("malformed header length"));
         }
@@ -176,42 +162,7 @@ impl Header {
             return Err(Error::Format("bad magic bytes"));
         }
         let version = buf[8];
-        if version != VERSION_V1 {
-            return Err(Error::Format("unknown container version"));
-        }
-
-        let mut salt = [0u8; SALT_LEN];
-        salt.copy_from_slice(&buf[9..9 + SALT_LEN]);
-
-        let mut params_bytes = [0u8; ARGON_PARAMS_LEN];
-        params_bytes.copy_from_slice(&buf[9 + SALT_LEN..9 + SALT_LEN + ARGON_PARAMS_LEN]);
-        let argon2 = Argon2Params::decode(&params_bytes);
-        argon2.validate_for_v1()?;
-
-        let mut nonce = [0u8; NONCE_LEN];
-        nonce.copy_from_slice(
-            &buf[9 + SALT_LEN + ARGON_PARAMS_LEN..9 + SALT_LEN + ARGON_PARAMS_LEN + NONCE_LEN],
-        );
-
-        Ok(Self {
-            salt,
-            argon2,
-            nonce,
-            verification_token: None,
-        })
-    }
-
-    pub fn parse_v2(buf: &[u8]) -> Result<Self, Error> {
-        let expected_len = HEADER_LEN + VERIFICATION_TOKEN_LEN;
-        if buf.len() != expected_len {
-            return Err(Error::Format("malformed header length"));
-        }
-        let magic = &buf[0..8];
-        if magic.ct_eq(&MAGIC).unwrap_u8() != 1 {
-            return Err(Error::Format("bad magic bytes"));
-        }
-        let version = buf[8];
-        if version != VERSION_V2 {
+        if version != VERSION {
             return Err(Error::Format("unknown container version"));
         }
 
@@ -238,20 +189,7 @@ impl Header {
             salt,
             argon2,
             nonce,
-            verification_token: Some(verification_token),
+            verification_token,
         })
-    }
-
-    /// Parse header, auto-detecting version
-    pub fn parse(buf: &[u8]) -> Result<Self, Error> {
-        if buf.len() < 9 {
-            return Err(Error::Format("header too short"));
-        }
-        let version = buf[8];
-        match version {
-            VERSION_V1 => Self::parse_v1(buf),
-            VERSION_V2 => Self::parse_v2(buf),
-            _ => Err(Error::Format("unknown container version")),
-        }
     }
 }

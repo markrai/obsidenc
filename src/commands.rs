@@ -287,13 +287,10 @@ pub fn encrypt(
         salt,
         argon2: params,
         nonce: base_nonce,
-        verification_token: Some(token_array),
+        verification_token: token_array,
     };
-    let header_bytes = header.encode_v2();
-    debug_assert_eq!(
-        header_bytes.len(),
-        HEADER_LEN + crate::format::VERIFICATION_TOKEN_LEN
-    );
+    let header_bytes = header.encode();
+    debug_assert_eq!(header_bytes.len(), HEADER_LEN);
 
     // Create cipher from encryption key (using locked enc_key)
     let cipher = aead::create_cipher(&**enc_key);
@@ -358,37 +355,22 @@ pub fn decrypt(
     };
 
     let mut f = File::open(input_file)?;
-    // Read enough bytes to detect version, then read full header
-    let mut version_buf = vec![0u8; 9];
-    f.read_exact(&mut version_buf)?;
-    let version = version_buf[8];
-    
-    // Determine header length based on version
-    let header_len = match version {
-        crate::format::VERSION_V1 => HEADER_LEN,
-        crate::format::VERSION_V2 => HEADER_LEN + crate::format::VERIFICATION_TOKEN_LEN,
-        _ => return Err(Error::Format("unknown container version")),
-    };
-    
-    let mut header_buf = vec![0u8; header_len];
-    header_buf[..9].copy_from_slice(&version_buf);
-    f.read_exact(&mut header_buf[9..])?;
+    let mut header_buf = vec![0u8; HEADER_LEN];
+    f.read_exact(&mut header_buf)?;
     let header = Header::parse(&header_buf)?;
 
     // Derive master key from password/keyfile
     let master_key = MemoryLock::new(kdf::derive_master_key(password, keyfile_bytes, &header.salt, header.argon2)?);
 
-    // Verify token early if present (V2+), providing immediate password feedback
-    if let Some(encrypted_token) = &header.verification_token {
-        let token_nonce = aead::derive_verification_token_nonce(&header.nonce)?;
-        let token_cipher = aead::create_cipher(&**master_key);
-        aead::verify_token(
-            &token_cipher,
-            &token_nonce,
-            &**master_key,
-            encrypted_token,
-        )?;
-    }
+    // Verify token early, providing immediate password feedback
+    let token_nonce = aead::derive_verification_token_nonce(&header.nonce)?;
+    let token_cipher = aead::create_cipher(&**master_key);
+    aead::verify_token(
+        &token_cipher,
+        &token_nonce,
+        &**master_key,
+        &header.verification_token,
+    )?;
 
     // Derive subkeys from master key with domain separation (using locked master_key)
     let enc_key = MemoryLock::new(kdf::derive_encryption_key(&**master_key)?);
