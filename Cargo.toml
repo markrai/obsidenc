@@ -1,0 +1,32 @@
+[package]
+name = "obsidenc"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+argon2 = { version = "0.5", default-features = true }
+clap = { version = "4.5", features = ["derive"] }
+rpassword = "7.3"
+subtle = "2.6"
+sysinfo = "0.33"
+tar = "0.4"
+thiserror = "1.0"
+zeroize = { version = "1.8", features = ["std"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+
+# RustCrypto primitives
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Memory"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
