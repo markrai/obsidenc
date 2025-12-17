@@ -217,10 +217,11 @@ pub fn derive_master_key(
     salt: &[u8; SALT_LEN],
     params: Argon2Params,
 ) -> Result<Zeroizing<[u8; 32]>, Error> {
-    let _pw_lock = MemoryLock::lock(&password);
-    let _keyfile_lock = keyfile.as_ref().map(|k| MemoryLock::lock(k.as_ref()));
-    let ikm = build_kdf_input(&password, keyfile.as_ref().map(|k| k.as_ref()))?;
-    let _ikm_lock = MemoryLock::lock(&ikm);
+    let password = MemoryLock::new(password);
+    let keyfile = keyfile.map(MemoryLock::new);
+    // Use the locked data via Deref - password and keyfile are now MemoryLock guards
+    let ikm = build_kdf_input(password.as_ref(), keyfile.as_ref().map(|k| k.as_ref()))?;
+    let ikm = MemoryLock::new(ikm);
 
     // Validate variant matches what we're using
     if params.argon2_variant != crate::format::ARGON2_VARIANT_ID {
@@ -240,12 +241,12 @@ pub fn derive_master_key(
 
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon_params);
 
-    let mut out = Zeroizing::new([0u8; 32]);
-    let _key_lock = MemoryLock::lock(&out[..]);
+    let mut out = MemoryLock::new(Zeroizing::new([0u8; 32]));
+    // Use the locked ikm via Deref
     argon2
-        .hash_password_into(&ikm, salt, out.as_mut())
+        .hash_password_into(ikm.as_ref(), salt, out.as_mut())
         .map_err(|_| Error::Crypto)?;
-    Ok(out)
+    Ok(out.clone())
 }
 
 /// Key derivation hierarchy:

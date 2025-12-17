@@ -1,4 +1,5 @@
 use crate::error::Error;
+use std::ops::{Deref, DerefMut};
 use zeroize::Zeroize;
 
 /// Best-effort memory locking for secrets.
@@ -8,32 +9,48 @@ use zeroize::Zeroize;
 /// - Locking may fail due to OS limits; failure is non-fatal.
 ///
 /// This struct owns the data it locks to guarantee lifetime safety.
-pub struct MemoryLock {
-    data: Vec<u8>,
+/// The guard pattern ensures the locked data is the data being used.
+pub struct MemoryLock<T: AsRef<[u8]> + Zeroize> {
+    data: T,
     locked: bool,
 }
 
-impl MemoryLock {
-    /// Lock a slice of bytes. The data is cloned into the MemoryLock.
-    pub fn lock(bytes: &[u8]) -> Self {
-        if bytes.is_empty() {
-            return Self {
-                data: Vec::new(),
-                locked: false,
-            };
-        }
-        let data = bytes.to_vec();
-        let locked = unsafe {
-            lock_region(data.as_ptr(), data.len())
-        }.is_ok();
+impl<T: AsRef<[u8]> + Zeroize> MemoryLock<T> {
+    /// Takes ownership of the data, locks it, and returns the guard.
+    /// The locked data can be accessed via Deref/DerefMut.
+    pub fn new(data: T) -> Self {
+        let slice = data.as_ref();
+        let ptr = slice.as_ptr();
+        let len = slice.len();
+        let locked = if len == 0 {
+            false
+        } else {
+            unsafe { lock_region(ptr, len) }.is_ok()
+        };
         Self { data, locked }
     }
 }
 
-impl Drop for MemoryLock {
+impl<T: AsRef<[u8]> + Zeroize> Deref for MemoryLock<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+impl<T: AsRef<[u8]> + AsMut<[u8]> + Zeroize> DerefMut for MemoryLock<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.data
+    }
+}
+
+impl<T: AsRef<[u8]> + Zeroize> Drop for MemoryLock<T> {
     fn drop(&mut self) {
-        if self.locked && !self.data.is_empty() {
-            let _ = unsafe { unlock_region(self.data.as_ptr(), self.data.len()) };
+        if self.locked {
+            let slice = self.data.as_ref();
+            if !slice.is_empty() {
+                let _ = unsafe { unlock_region(slice.as_ptr(), slice.len()) };
+            }
         }
         // Zeroize the data before dropping
         self.data.zeroize();
