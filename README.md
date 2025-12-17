@@ -96,6 +96,22 @@ cargo install cargo-audit
 cargo audit
 ```
 
+## Smoke test (CLI round-trip)
+
+There is an automated smoke test that:
+- Encrypts the files in `test/mock` into `test/test.oen`
+- Decrypts `test/test.oen` into `test/decrypt`
+- Verifies that all decrypted files exactly match the originals in `test/mock`
+
+To run it:
+
+```sh
+# From the project root
+cargo test --test roundtrip
+```
+
+The test never modifies the original `test/mock` data; it only creates and deletes `test/test.oen` and `test/decrypt/`.
+
 ## Fuzzing
 
 The project includes fuzzing infrastructure to verify robustness against malformed input. Fuzzing helps ensure that the decryption parser never panics on invalid data.
