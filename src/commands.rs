@@ -207,6 +207,23 @@ impl Write for EncryptingWriter {
         // Flush any remaining data as the final chunk
         self.flush_chunk(true)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}", e)))?;
+        
+        // Write zero-length chunk marker to signal end of encrypted data
+        // This prevents padding from being misinterpreted as chunk data
+        let zero_len: u32 = 0;
+        self.file.write_all(&zero_len.to_le_bytes())?;
+        
+        // Add padding to obscure file size (privacy preservation)
+        // Padding ensures file size is always a multiple of 4KB, preventing
+        // attackers from fingerprinting files based on exact size
+        let current_pos = self.file.stream_position()?;
+        let padding_needed = 4096 - (current_pos % 4096);
+        if padding_needed > 0 && padding_needed != 4096 {
+            let mut padding = vec![0u8; padding_needed as usize];
+            OsRng.fill_bytes(&mut padding);
+            self.file.write_all(&padding)?;
+        }
+        
         self.file.flush()
     }
 }
@@ -472,7 +489,10 @@ impl StreamingDecryptReader {
 
         let chunk_ciphertext_len = u32::from_le_bytes(len_bytes) as usize;
         if chunk_ciphertext_len == 0 {
-            return Err(Error::Format("zero-length chunk"));
+            // Zero-length chunk marks end of encrypted data (sentinel)
+            // Any padding after this will not be parsed as chunk data
+            self.eof = true;
+            return Ok(());
         }
         if chunk_ciphertext_len > 10 * 1024 * 1024 {
             // Sanity check: reject chunks larger than 10MB
