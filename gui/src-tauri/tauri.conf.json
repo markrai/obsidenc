@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Obsidenc",
+  "version": "0.1.11",
+  "identifier": "com.obsidenc.gui",
+  "build": {
+    "frontendDist": "../ui",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\dev.ps1",
+    "beforeBuildCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\build-sidecar.ps1"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Obsidenc",
+        "width": 800,
+        "height": 600,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "freezePrototype": true,
+      "csp": "default-src 'self'; img-src 'self' asset: data:; style-src 'self'; script-src 'self'; connect-src ipc: http://ipc.localhost;"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "bin/obsidenc"
+    ]
+  }
+}

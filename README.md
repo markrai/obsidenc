@@ -61,6 +61,32 @@ Notes:
 - If `--keyfile` is used, both password and keyfile are required.
 - Decryption refuses to overwrite an existing output directory unless `--force` is supplied.
 
+### Non-interactive password input
+
+For automation (and the bundled GUI), passwords can be provided via stdin:
+
+```sh
+# Encrypt: 2 lines on stdin (password + confirmation)
+printf '%s\n%s\n' "$PW" "$PW" | obsidenc --password-stdin encrypt <vault_dir> <output_file>
+
+# Decrypt: 1 line on stdin (password)
+printf '%s\n' "$PW" | obsidenc --password-stdin decrypt <input_file> <output_dir>
+```
+
+## GUI (Tauri)
+
+The repository includes a minimal Tauri desktop UI that drives `obsidenc` as a bundled sidecar binary. The GUI does **not** implement crypto; it spawns `obsidenc` and passes the password via stdin (`--password-stdin`).
+
+From `gui/`:
+
+```sh
+# Dev (builds sidecar + starts a local UI server)
+cargo tauri dev
+
+# Release bundle (builds sidecar from source and embeds it)
+cargo tauri build
+```
+
 ## Supply-chain security (release blockers)
 
 Install and run:

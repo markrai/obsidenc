@@ -9,8 +9,10 @@ pub const NONCE_LEN: usize = 24;
 
 pub const ARGON_PARAMS_LEN: usize = 16;
 // Verification token for early password validation
+// Plaintext is 15 bytes ("OBSIDENC_VERIFY"); XChaCha20-Poly1305 adds a 16-byte tag,
+// so ciphertext is 31 bytes.
 pub const VERIFICATION_TOKEN_PLAINTEXT: &[u8] = b"OBSIDENC_VERIFY";
-pub const VERIFICATION_TOKEN_LEN: usize = 16; // XChaCha20-Poly1305 ciphertext size for 14-byte plaintext
+pub const VERIFICATION_TOKEN_LEN: usize = 31;
 pub const HEADER_LEN: usize = 8 + 1 + SALT_LEN + ARGON_PARAMS_LEN + NONCE_LEN + VERIFICATION_TOKEN_LEN;
 
 // Argon2 variant identifiers (for documentation and future extensibility)

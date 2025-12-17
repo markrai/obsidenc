@@ -1,6 +1,6 @@
 use crate::error::Error;
 use crate::format::NONCE_LEN;
-use chacha20poly1305::{AeadInPlace, KeyInit, XChaCha20Poly1305, XNonce};
+use chacha20poly1305::{aead::Aead, AeadInPlace, KeyInit, XChaCha20Poly1305, XNonce};
 use hkdf::Hkdf;
 use sha2::Sha256;
 
@@ -85,15 +85,22 @@ pub fn encrypt_verification_token(
     master_key: &[u8; 32],
 ) -> Result<Vec<u8>, Error> {
     use crate::format::VERIFICATION_TOKEN_PLAINTEXT;
-    
+
     let nonce = XNonce::from_slice(token_nonce);
     // Use master key as AAD to bind token to the specific key
     let aad = master_key;
-    let mut buffer = VERIFICATION_TOKEN_PLAINTEXT.to_vec();
+
+    // Use the high-level Aead::encrypt API so the buffer is sized correctly
+    // (plaintext + 16-byte tag). This avoids the in-place buffer size issues.
     cipher
-        .encrypt_in_place(nonce, aad, &mut buffer)
-        .map_err(|_| Error::Crypto)?;
-    Ok(buffer)
+        .encrypt(
+            nonce,
+            chacha20poly1305::aead::Payload {
+                msg: VERIFICATION_TOKEN_PLAINTEXT,
+                aad,
+            },
+        )
+        .map_err(|_| Error::Crypto)
 }
 
 /// Decrypt and verify the verification token.

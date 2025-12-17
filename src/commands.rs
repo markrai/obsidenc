@@ -1,14 +1,18 @@
-use obsidenc::{aead, error::Error, format::{Header, HEADER_LEN}};
 use crate::cli::{Cli, Command};
 use crate::kdf;
 use crate::securemem::MemoryLock;
 use crate::vaulttar;
+use chacha20poly1305::XChaCha20Poly1305;
+use obsidenc::{
+    aead,
+    error::Error,
+    format::{Header, HEADER_LEN},
+};
 use rand_core::{OsRng, RngCore};
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Seek, Write};
+use std::io::{BufRead, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use chacha20poly1305::XChaCha20Poly1305;
 use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
@@ -23,10 +27,12 @@ pub fn setup_signal_handlers() -> Result<(), Error> {
         INTERRUPTED.store(true, Ordering::SeqCst);
         eprintln!("\n⚠️  Interrupt received. Cleaning up secrets and exiting...");
     })
-    .map_err(|e| Error::Io(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        format!("failed to set signal handler: {}", e),
-    )))?;
+    .map_err(|e| {
+        Error::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("failed to set signal handler: {}", e),
+        ))
+    })?;
     Ok(())
 }
 
@@ -41,20 +47,34 @@ fn check_interrupted() -> Result<(), Error> {
 }
 
 pub fn run(cli: Cli) -> Result<(), Error> {
+    let password_stdin = cli.password_stdin;
     match cli.command {
         Command::Encrypt {
             vault_dir,
             output_file,
             keyfile,
             force,
-        } => encrypt(&vault_dir, &output_file, keyfile.as_deref(), force),
+        } => encrypt(
+            &vault_dir,
+            &output_file,
+            keyfile.as_deref(),
+            force,
+            password_stdin,
+        ),
         Command::Decrypt {
             input_file,
             output_dir,
             keyfile,
             force,
             secure_delete,
-        } => decrypt(&input_file, &output_dir, keyfile.as_deref(), force, secure_delete),
+        } => decrypt(
+            &input_file,
+            &output_dir,
+            keyfile.as_deref(),
+            force,
+            secure_delete,
+            password_stdin,
+        ),
     }
 }
 
@@ -64,7 +84,7 @@ fn open_new_file(path: &Path, force: bool) -> Result<File, Error> {
         use std::os::unix::fs::OpenOptionsExt;
         let mut oo = OpenOptions::new();
         oo.write(true);
-        
+
         if force {
             // Force mode: truncate existing file
             oo.create(true).truncate(true).mode(0o600);
@@ -85,7 +105,7 @@ fn open_new_file(path: &Path, force: bool) -> Result<File, Error> {
     {
         let mut oo = OpenOptions::new();
         oo.write(true);
-        
+
         if force {
             // Force mode: truncate existing file
             oo.create(true).truncate(true);
@@ -104,15 +124,32 @@ fn open_new_file(path: &Path, force: bool) -> Result<File, Error> {
     }
 }
 
+fn read_password_line(reader: &mut impl BufRead) -> Result<Zeroizing<Vec<u8>>, Error> {
+    let mut buf = Vec::new();
+    let read = reader.read_until(b'\n', &mut buf)?;
+    if read == 0 {
+        return Err(Error::InvalidArgs("expected password on stdin"));
+    }
+
+    // Strip trailing newline (and optional carriage return) without trimming other whitespace.
+    if buf.last() == Some(&b'\n') {
+        buf.pop();
+        if buf.last() == Some(&b'\r') {
+            buf.pop();
+        }
+    }
+
+    Ok(Zeroizing::new(buf))
+}
+
 fn prompt_password(confirm: bool) -> Result<Zeroizing<Vec<u8>>, Error> {
     let pw = rpassword::prompt_password("Password: ")
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "password input failed"))?;
     kdf::enforce_password_policy(&pw)?;
     let pw = Zeroizing::new(pw.into_bytes());
     if confirm {
-        let pw2 = rpassword::prompt_password("Confirm password: ").map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::Other, "password input failed")
-        })?;
+        let pw2 = rpassword::prompt_password("Confirm password: ")
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "password input failed"))?;
         let pw2 = Zeroizing::new(pw2.into_bytes());
         // Use constant-time comparison to prevent timing side-channel attacks
         if !bool::from(pw.as_slice().ct_eq(pw2.as_slice())) {
@@ -120,6 +157,34 @@ fn prompt_password(confirm: bool) -> Result<Zeroizing<Vec<u8>>, Error> {
         }
     }
     Ok(pw)
+}
+
+fn password_from_stdin(confirm: bool) -> Result<Zeroizing<Vec<u8>>, Error> {
+    let stdin = std::io::stdin();
+    let mut reader = stdin.lock();
+
+    let pw = read_password_line(&mut reader)?;
+    let pw_str = std::str::from_utf8(pw.as_slice())
+        .map_err(|_| Error::InvalidArgs("password must be valid UTF-8"))?;
+    kdf::enforce_password_policy(pw_str)?;
+
+    if confirm {
+        let pw2 = read_password_line(&mut reader)?;
+        // Use constant-time comparison to prevent timing side-channel attacks
+        if !bool::from(pw.as_slice().ct_eq(pw2.as_slice())) {
+            return Err(Error::PasswordPolicy("passwords did not match"));
+        }
+    }
+
+    Ok(pw)
+}
+
+fn read_password(confirm: bool, password_stdin: bool) -> Result<Zeroizing<Vec<u8>>, Error> {
+    if password_stdin {
+        password_from_stdin(confirm)
+    } else {
+        prompt_password(confirm)
+    }
 }
 
 fn staging_dir_for(output_dir: &Path) -> Result<PathBuf, Error> {
@@ -184,7 +249,7 @@ impl EncryptingWriter {
     /// Encrypt and write the current buffer as a chunk.
     fn flush_chunk(&mut self, is_final: bool) -> Result<(), Error> {
         check_interrupted()?;
-        
+
         if self.buffer.is_empty() {
             return Ok(());
         }
@@ -192,12 +257,7 @@ impl EncryptingWriter {
         let chunk_nonce = aead::derive_chunk_nonce(&**self.nonce_key, self.chunk_index)?;
         let aad = aead::build_chunk_aad(&self.header_bytes, self.chunk_index, is_final);
 
-        let chunk_ciphertext = aead::encrypt_chunk(
-            &self.cipher,
-            &chunk_nonce,
-            &aad,
-            &self.buffer,
-        )?;
+        let chunk_ciphertext = aead::encrypt_chunk(&self.cipher, &chunk_nonce, &aad, &self.buffer)?;
 
         // Write chunk record: [u32 len][ciphertext]
         let chunk_len = chunk_ciphertext.len() as u32;
@@ -218,14 +278,18 @@ impl Write for EncryptingWriter {
         while !remaining.is_empty() {
             // Check for interruption before processing each chunk
             if let Err(e) = check_interrupted() {
-                return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, format!("{}", e)));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    format!("{}", e),
+                ));
             }
-            
+
             let available = aead::CHUNK_SIZE_BYTES - self.buffer.len();
             if available == 0 {
                 // Buffer is full, encrypt and write this chunk
-                self.flush_chunk(false)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}", e)))?;
+                self.flush_chunk(false).map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::Other, format!("{}", e))
+                })?;
                 continue;
             }
 
@@ -242,12 +306,12 @@ impl Write for EncryptingWriter {
         // Flush any remaining data as the final chunk
         self.flush_chunk(true)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}", e)))?;
-        
+
         // Write zero-length chunk marker to signal end of encrypted data
         // This prevents padding from being misinterpreted as chunk data
         let zero_len: u32 = 0;
         self.file.write_all(&zero_len.to_le_bytes())?;
-        
+
         // Add padding to obscure file size (privacy preservation)
         // Padding ensures file size is always a multiple of 4KB, preventing
         // attackers from fingerprinting files based on exact size
@@ -258,7 +322,7 @@ impl Write for EncryptingWriter {
             OsRng.fill_bytes(&mut padding);
             self.file.write_all(&padding)?;
         }
-        
+
         self.file.flush()
     }
 }
@@ -268,13 +332,16 @@ pub fn encrypt(
     output_file: &Path,
     keyfile: Option<&Path>,
     force: bool,
+    password_stdin: bool,
 ) -> Result<(), Error> {
     let meta = fs::symlink_metadata(vault_dir)?;
     if !meta.is_dir() {
         return Err(Error::InvalidArgs("vault_dir must be a directory"));
     }
     if meta.file_type().is_symlink() {
-        return Err(Error::Unsupported("refusing to encrypt symlinked vault root"));
+        return Err(Error::Unsupported(
+            "refusing to encrypt symlinked vault root",
+        ));
     }
 
     // Ensure output file has .oen extension
@@ -286,7 +353,7 @@ pub fn encrypt(
         path
     };
 
-    let password = prompt_password(true)?;
+    let password = read_password(true, password_stdin)?;
 
     let keyfile_bytes = match keyfile {
         Some(p) => Some(kdf::read_keyfile(p)?),
@@ -310,7 +377,12 @@ pub fn encrypt(
 
     // Derive master key from password/keyfile
     check_interrupted()?;
-    let master_key = MemoryLock::new(kdf::derive_master_key(password, keyfile_bytes, &salt, params)?);
+    let master_key = MemoryLock::new(kdf::derive_master_key(
+        password,
+        keyfile_bytes,
+        &salt,
+        params,
+    )?);
 
     // Derive subkeys from master key with domain separation (using locked master_key)
     check_interrupted()?;
@@ -320,11 +392,8 @@ pub fn encrypt(
     // Encrypt verification token for early password validation (V2)
     let token_nonce = aead::derive_verification_token_nonce(&base_nonce)?;
     let token_cipher = aead::create_cipher(&**master_key);
-    let encrypted_token = aead::encrypt_verification_token(
-        &token_cipher,
-        &token_nonce,
-        &**master_key,
-    )?;
+    let encrypted_token =
+        aead::encrypt_verification_token(&token_cipher, &token_nonce, &**master_key)?;
     let mut token_array = [0u8; crate::format::VERIFICATION_TOKEN_LEN];
     if encrypted_token.len() != token_array.len() {
         return Err(Error::Crypto);
@@ -349,12 +418,7 @@ pub fn encrypt(
     out.write_all(&header_bytes)?;
 
     // Create streaming encryption writer for TAR data
-    let mut encrypting_writer = EncryptingWriter::new(
-        out,
-        cipher,
-        nonce_key,
-        header_bytes,
-    );
+    let mut encrypting_writer = EncryptingWriter::new(out, cipher, nonce_key, header_bytes);
 
     // Stream tar archive directly to encryption writer (no buffering)
     check_interrupted()?;
@@ -377,6 +441,7 @@ pub fn decrypt(
     keyfile: Option<&Path>,
     force: bool,
     secure_delete: bool,
+    password_stdin: bool,
 ) -> Result<(), Error> {
     let meta = fs::metadata(input_file)?;
     if !meta.is_file() {
@@ -392,7 +457,7 @@ pub fn decrypt(
             } else {
                 false // If it's a file, it's not empty
             };
-            
+
             if !is_empty {
                 return Err(Error::WouldOverwrite(output_dir.to_path_buf()));
             }
@@ -400,7 +465,7 @@ pub fn decrypt(
         }
     }
 
-    let password = prompt_password(false)?;
+    let password = read_password(false, password_stdin)?;
     let keyfile_bytes = match keyfile {
         Some(p) => Some(kdf::read_keyfile(p)?),
         None => None,
@@ -413,7 +478,12 @@ pub fn decrypt(
 
     // Derive master key from password/keyfile
     check_interrupted()?;
-    let master_key = MemoryLock::new(kdf::derive_master_key(password, keyfile_bytes, &header.salt, header.argon2)?);
+    let master_key = MemoryLock::new(kdf::derive_master_key(
+        password,
+        keyfile_bytes,
+        &header.salt,
+        header.argon2,
+    )?);
 
     // Verify token early, providing immediate password feedback
     check_interrupted()?;
@@ -440,13 +510,7 @@ pub fn decrypt(
 
     // Stream decrypt chunks directly to tar extractor (auth-first, no memory accumulation)
     check_interrupted()?;
-    let decrypt_reader = StreamingDecryptReader::new(
-        f,
-        meta.len(),
-        cipher,
-        nonce_key,
-        header_buf,
-    )?;
+    let decrypt_reader = StreamingDecryptReader::new(f, meta.len(), cipher, nonce_key, header_buf)?;
     check_interrupted()?;
     vaulttar::extract_to_dir(decrypt_reader, &staging)?;
 
@@ -457,7 +521,7 @@ pub fn decrypt(
         } else {
             false
         };
-        
+
         if !is_empty {
             if force {
                 safe_remove_dir_all(output_dir)?;
@@ -510,39 +574,37 @@ impl Drop for StagingCleanup {
 /// Note: Effectiveness is limited on SSDs due to wear leveling.
 fn secure_delete_file(path: &Path) -> Result<(), Error> {
     use std::io::{Seek, Write};
-    
+
     // Get file size first
     let metadata = std::fs::metadata(path)?;
     let file_size = metadata.len();
-    
+
     if file_size == 0 {
         // Empty file, just delete
         std::fs::remove_file(path)?;
         return Ok(());
     }
-    
+
     // Open for writing to overwrite content
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .open(path)?;
-    
+    let mut file = std::fs::OpenOptions::new().write(true).open(path)?;
+
     // Overwrite in chunks to avoid memory issues
     const CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks
     let zeros = vec![0u8; CHUNK_SIZE];
     let mut remaining = file_size;
-    
+
     file.seek(std::io::SeekFrom::Start(0))?;
-    
+
     while remaining > 0 {
         let to_write = (remaining as usize).min(CHUNK_SIZE);
         file.write_all(&zeros[..to_write])?;
         remaining -= to_write as u64;
     }
-    
+
     // Force write to disk
     file.sync_all()?;
     drop(file);
-    
+
     // Now delete
     std::fs::remove_file(path)?;
     Ok(())
@@ -558,13 +620,13 @@ fn secure_remove_dir_all(path: &Path) -> Result<(), Error> {
     if path.parent().is_none() {
         return Err(Error::InvalidArgs("refusing to delete filesystem root"));
     }
-    
+
     // Recursively delete files and directories
     if path.is_dir() {
         for entry in std::fs::read_dir(path)? {
             let entry = entry?;
             let entry_path = entry.path();
-            
+
             if entry_path.is_dir() {
                 secure_remove_dir_all(&entry_path)?;
             } else {
@@ -576,7 +638,7 @@ fn secure_remove_dir_all(path: &Path) -> Result<(), Error> {
     } else {
         secure_delete_file(path)?;
     }
-    
+
     Ok(())
 }
 
@@ -632,7 +694,7 @@ impl StreamingDecryptReader {
 
     fn load_next_chunk(&mut self) -> Result<(), Error> {
         check_interrupted()?;
-        
+
         if self.eof {
             return Ok(());
         }
@@ -678,18 +740,20 @@ impl StreamingDecryptReader {
 
         // Decrypt chunk (this verifies authentication)
         // If is_final was wrong, try the other value
-        let chunk_plaintext = match aead::decrypt_chunk(&self.cipher, &chunk_nonce, &aad, &chunk_ciphertext) {
-            Ok(pt) => pt,
-            Err(_) if !is_final => {
-                // Try with is_final=true in case we misdetected
-                let aad_final = aead::build_chunk_aad(&self.header_bytes, self.chunk_index, true);
-                aead::decrypt_chunk(&self.cipher, &chunk_nonce, &aad_final, &chunk_ciphertext)?
-            }
-            Err(e) => {
-                // Authentication failed - abort immediately
-                return Err(e);
-            }
-        };
+        let chunk_plaintext =
+            match aead::decrypt_chunk(&self.cipher, &chunk_nonce, &aad, &chunk_ciphertext) {
+                Ok(pt) => pt,
+                Err(_) if !is_final => {
+                    // Try with is_final=true in case we misdetected
+                    let aad_final =
+                        aead::build_chunk_aad(&self.header_bytes, self.chunk_index, true);
+                    aead::decrypt_chunk(&self.cipher, &chunk_nonce, &aad_final, &chunk_ciphertext)?
+                }
+                Err(e) => {
+                    // Authentication failed - abort immediately
+                    return Err(e);
+                }
+            };
 
         self.current_chunk = chunk_plaintext;
         self.current_pos = 0;
@@ -719,8 +783,9 @@ impl Read for StreamingDecryptReader {
                 if self.eof {
                     return Ok(total_read);
                 }
-                self.load_next_chunk()
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}", e)))?;
+                self.load_next_chunk().map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::Other, format!("{}", e))
+                })?;
                 if self.eof && self.current_chunk.is_empty() {
                     return Ok(total_read);
                 }

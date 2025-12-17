@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>obsidenc</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <main class="container">
+      <header class="header">
+        <h1>obsidenc</h1>
+        <p class="subtitle">Paranoid-grade directory encryption (sidecar: <code>obsidenc.exe</code>)</p>
+      </header>
+
+      <nav class="tabs" aria-label="Mode">
+        <button class="tab active" type="button" data-tab="encrypt">Encrypt</button>
+        <button class="tab" type="button" data-tab="decrypt">Decrypt</button>
+      </nav>
+
+      <section class="panel active" id="encrypt" aria-label="Encrypt">
+        <form id="encrypt-form" autocomplete="off">
+          <div class="grid">
+            <label>
+              Vault directory (absolute)
+              <div class="field-with-button">
+                <input id="enc-vault-dir" type="text" placeholder="C:\\path\\to\\vault" required />
+                <button id="enc-vault-browse" type="button" class="secondary">Browse…</button>
+              </div>
+            </label>
+            <label>
+              Output file (absolute, .oen added if missing)
+              <div class="field-with-button">
+                <input id="enc-output-file" type="text" placeholder="C:\\path\\to\\archive.oen" required />
+                <button id="enc-output-browse" type="button" class="secondary">Browse…</button>
+              </div>
+            </label>
+            <label>
+              Keyfile (optional, absolute)
+              <div class="field-with-button">
+                <input id="enc-keyfile" type="text" placeholder="C:\\path\\to\\keyfile.bin" />
+                <button id="enc-keyfile-browse" type="button" class="secondary">Browse…</button>
+              </div>
+            </label>
+            <label class="checkbox">
+              <input id="enc-force" type="checkbox" />
+              Overwrite existing output
+            </label>
+            <label>
+              Password (min 20 chars)
+              <input id="enc-password" type="password" autocomplete="new-password" required />
+            </label>
+            <label>
+              Confirm password
+              <input id="enc-password-confirm" type="password" autocomplete="new-password" required />
+            </label>
+          </div>
+          <div class="actions">
+            <button id="enc-run" type="submit">Encrypt</button>
+            <span class="hint">Passwords are sent via stdin and zeroized in Rust after write.</span>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel" id="decrypt" aria-label="Decrypt">
+        <form id="decrypt-form" autocomplete="off">
+          <div class="grid">
+            <label>
+              Input file (absolute)
+              <div class="field-with-button">
+                <input id="dec-input-file" type="text" placeholder="C:\\path\\to\\archive.oen" required />
+                <button id="dec-input-browse" type="button" class="secondary">Browse…</button>
+              </div>
+            </label>
+            <label>
+              Output directory (absolute)
+              <div class="field-with-button">
+                <input id="dec-output-dir" type="text" placeholder="C:\\path\\to\\output" required />
+                <button id="dec-output-browse" type="button" class="secondary">Browse…</button>
+              </div>
+            </label>
+            <label>
+              Keyfile (optional, absolute)
+              <div class="field-with-button">
+                <input id="dec-keyfile" type="text" placeholder="C:\\path\\to\\keyfile.bin" />
+                <button id="dec-keyfile-browse" type="button" class="secondary">Browse…</button>
+              </div>
+            </label>
+            <label class="checkbox">
+              <input id="dec-force" type="checkbox" />
+              Allow overwrite
+            </label>
+            <label class="checkbox">
+              <input id="dec-secure-delete" type="checkbox" />
+              Secure-delete staging files (slower)
+            </label>
+            <label>
+              Password (min 20 chars)
+              <input id="dec-password" type="password" autocomplete="current-password" required />
+            </label>
+          </div>
+          <div class="actions">
+            <button id="dec-run" type="submit">Decrypt</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel logs" aria-label="Logs">
+        <div class="log-header">
+          <h2>Logs</h2>
+          <button id="clear-logs" type="button">Clear</button>
+        </div>
+        <pre id="log-output" class="log-output"></pre>
+        <div id="status" class="status" role="status" aria-live="polite"></div>
+      </section>
+    </main>
+  </body>
+</html>
+
