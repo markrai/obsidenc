@@ -70,8 +70,8 @@
 ### Operational Security
 
 **Encryption Process:**
-- Creates TAR archive in memory (chunked for large directories)
-- Encrypts in 64KB chunks with unique nonces
+- Streams TAR archive directly to encryption writer (no buffering)
+- Encrypts in 64KB chunks with unique nonces as data is written
 - Writes header (magic, version, salt, Argon2 params, base nonce)
 - Writes chunk records: [u32 length][ciphertext+tag]
 
@@ -144,4 +144,5 @@
 ## Summary
 
 obsidenc is a production-grade encryption utility that prioritizes security over convenience. It implements modern cryptographic best practices, defensive programming techniques, and resistance to sophisticated attack scenarios. The adaptive Argon2id parameters ensure strong security across different hardware configurations while maintaining reasonable performance. The streaming architecture and memory protection features minimize plaintext exposure windows, making it suitable for high-security use cases where data protection is paramount.
+
 

@@ -96,6 +96,92 @@ fn hex8(bytes: &[u8; 8]) -> String {
     String::from_utf8_lossy(&out).to_string()
 }
 
+/// Streaming encryption writer that encrypts data on-the-fly in chunks.
+/// This avoids buffering the entire plaintext in memory.
+struct EncryptingWriter {
+    file: File,
+    cipher: XChaCha20Poly1305,
+    nonce_key: Zeroizing<[u8; 32]>,
+    header_bytes: Vec<u8>,
+    buffer: Vec<u8>,
+    chunk_index: u64,
+}
+
+impl EncryptingWriter {
+    fn new(
+        file: File,
+        cipher: XChaCha20Poly1305,
+        nonce_key: Zeroizing<[u8; 32]>,
+        header_bytes: Vec<u8>,
+    ) -> Self {
+        Self {
+            file,
+            cipher,
+            nonce_key,
+            header_bytes,
+            buffer: Vec::with_capacity(aead::CHUNK_SIZE_BYTES),
+            chunk_index: 0,
+        }
+    }
+
+    /// Encrypt and write the current buffer as a chunk.
+    fn flush_chunk(&mut self, is_final: bool) -> Result<(), Error> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+
+        let chunk_nonce = aead::derive_chunk_nonce(&*self.nonce_key, self.chunk_index);
+        let aad = aead::build_chunk_aad(&self.header_bytes, self.chunk_index, is_final);
+
+        let chunk_ciphertext = aead::encrypt_chunk(
+            &self.cipher,
+            &chunk_nonce,
+            &aad,
+            &self.buffer,
+        )?;
+
+        // Write chunk record: [u32 len][ciphertext]
+        let chunk_len = chunk_ciphertext.len() as u32;
+        self.file.write_all(&chunk_len.to_le_bytes())?;
+        self.file.write_all(&chunk_ciphertext)?;
+
+        self.buffer.clear();
+        self.chunk_index += 1;
+        Ok(())
+    }
+}
+
+impl Write for EncryptingWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut written = 0;
+        let mut remaining = buf;
+
+        while !remaining.is_empty() {
+            let available = aead::CHUNK_SIZE_BYTES - self.buffer.len();
+            if available == 0 {
+                // Buffer is full, encrypt and write this chunk
+                self.flush_chunk(false)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}", e)))?;
+                continue;
+            }
+
+            let to_copy = available.min(remaining.len());
+            self.buffer.extend_from_slice(&remaining[..to_copy]);
+            remaining = &remaining[to_copy..];
+            written += to_copy;
+        }
+
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        // Flush any remaining data as the final chunk
+        self.flush_chunk(true)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}", e)))?;
+        self.file.flush()
+    }
+}
+
 pub fn encrypt(
     vault_dir: &Path,
     output_file: &Path,
@@ -151,42 +237,27 @@ pub fn encrypt(
     // Create cipher from encryption key
     let cipher = aead::create_cipher(&*enc_key);
 
-    // Write header
+    // Write header directly (unencrypted)
     let mut out = open_new_file(&output_file, force)?;
     out.write_all(&header_bytes)?;
 
-    // Create tar archive in memory buffer (we'll chunk it)
-    let mut tar_buffer = Vec::new();
+    // Create streaming encryption writer for TAR data
+    let mut encrypting_writer = EncryptingWriter::new(
+        out,
+        cipher,
+        nonce_key,
+        header_bytes,
+    );
+
+    // Stream tar archive directly to encryption writer (no buffering)
     {
-        let mut builder = tar::Builder::new(&mut tar_buffer);
+        let mut builder = tar::Builder::new(&mut encrypting_writer);
         vaulttar::append_vault_dir(&mut builder, vault_dir)?;
+        builder.finish()?;
     }
 
-    // Encrypt in chunks
-    let mut chunk_index = 0u64;
-    let mut remaining = &tar_buffer[..];
-    const CHUNK_SIZE: usize = aead::CHUNK_SIZE_BYTES;
-
-    while !remaining.is_empty() {
-        let chunk_plaintext_len = remaining.len().min(CHUNK_SIZE);
-        let chunk_plaintext = &remaining[..chunk_plaintext_len];
-        remaining = &remaining[chunk_plaintext_len..];
-
-        let is_final = remaining.is_empty();
-        let chunk_nonce = aead::derive_chunk_nonce(&*nonce_key, chunk_index);
-        let aad = aead::build_chunk_aad(&header_bytes, chunk_index, is_final);
-
-        let chunk_ciphertext = aead::encrypt_chunk(&cipher, &chunk_nonce, &aad, chunk_plaintext)?;
-
-        // Write chunk record: [u32 len][ciphertext]
-        let chunk_len = chunk_ciphertext.len() as u32;
-        out.write_all(&chunk_len.to_le_bytes())?;
-        out.write_all(&chunk_ciphertext)?;
-
-        chunk_index += 1;
-    }
-
-    out.flush()?;
+    // Flush any remaining data as final chunk
+    encrypting_writer.flush()?;
     eprintln!("Encryption successful: {}", output_file.display());
     Ok(())
 }

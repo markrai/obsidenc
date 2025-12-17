@@ -1,37 +1,42 @@
 use crate::error::Error;
+use zeroize::Zeroize;
 
 /// Best-effort memory locking for secrets.
 ///
 /// This reduces exposure to swapping on supported OSes, but it is not a complete mitigation:
 /// - Small buffers share pages with other allocations.
 /// - Locking may fail due to OS limits; failure is non-fatal.
+///
+/// This struct owns the data it locks to guarantee lifetime safety.
 pub struct MemoryLock {
-    ptr: *const u8,
-    len: usize,
+    data: Vec<u8>,
     locked: bool,
 }
 
 impl MemoryLock {
+    /// Lock a slice of bytes. The data is cloned into the MemoryLock.
     pub fn lock(bytes: &[u8]) -> Self {
         if bytes.is_empty() {
             return Self {
-                ptr: std::ptr::null(),
-                len: 0,
+                data: Vec::new(),
                 locked: false,
             };
         }
-        let ptr = bytes.as_ptr();
-        let len = bytes.len();
-        let locked = unsafe { lock_region(ptr, len) }.is_ok();
-        Self { ptr, len, locked }
+        let data = bytes.to_vec();
+        let locked = unsafe {
+            lock_region(data.as_ptr(), data.len())
+        }.is_ok();
+        Self { data, locked }
     }
 }
 
 impl Drop for MemoryLock {
     fn drop(&mut self) {
-        if self.locked && !self.ptr.is_null() && self.len != 0 {
-            let _ = unsafe { unlock_region(self.ptr, self.len) };
+        if self.locked && !self.data.is_empty() {
+            let _ = unsafe { unlock_region(self.data.as_ptr(), self.data.len()) };
         }
+        // Zeroize the data before dropping
+        self.data.zeroize();
     }
 }
 
