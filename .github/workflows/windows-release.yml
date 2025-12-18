@@ -44,6 +44,9 @@ jobs:
           $hash = Get-FileHash $exe -Algorithm SHA256
           "$($hash.Hash.ToLower())  $(Split-Path $exe -Leaf)" | Out-File "$exe.sha256" -Encoding ASCII
 
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version ^2 --locked
+
       - name: Build Tauri GUI (Windows)
         working-directory: gui
         run: cargo tauri build --target x86_64-pc-windows-msvc
