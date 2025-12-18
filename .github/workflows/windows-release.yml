@@ -1,0 +1,84 @@
+name: Windows Release (obsidenc.exe)
+
+on:
+  # Run manually from the Actions tab
+  workflow_dispatch:
+  # Or automatically on version tags like v1.0.0
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Run smoke test (roundtrip)
+        run: cargo test --test roundtrip --release
+
+      - name: Prepare CLI release artifact
+        # Rename the CLI binary to include the tag in the filename, e.g. obsidenc-v1.0.0-windows-x86_64.exe
+        # and generate a SHA-256 checksum alongside it.
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "${{ github.ref_name }}"
+          if (-not $tag) { $tag = "dev-build" }
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $exe = "dist\obsidenc-$tag-windows-x86_64.exe"
+          Copy-Item "target\release\obsidenc.exe" $exe -Force
+          # Write checksum file: "<SHA256>  <filename>"
+          $hash = Get-FileHash $exe -Algorithm SHA256
+          "$($hash.Hash.ToLower())  $(Split-Path $exe -Leaf)" | Out-File "$exe.sha256" -Encoding ASCII
+
+      - name: Build Tauri GUI (Windows)
+        working-directory: gui
+        run: cargo tauri build --target x86_64-pc-windows-msvc
+
+      - name: Prepare GUI release artifact
+        # Copy the built Tauri GUI exe and generate a SHA-256 checksum.
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "${{ github.ref_name }}"
+          if (-not $tag) { $tag = "dev-build" }
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $guiExe = Get-ChildItem "gui\src-tauri\target" -Recurse -Filter "app.exe" | Where-Object { $_.FullName -like "*\release\app.exe" } | Select-Object -First 1
+          if (-not $guiExe) { throw "Tauri GUI exe not found under gui\src-tauri\target\*\release\app.exe"; }
+          $out = "dist\obsidenc-gui-$tag-windows-x86_64.exe"
+          Copy-Item $guiExe.FullName $out -Force
+          $hash = Get-FileHash $out -Algorithm SHA256
+          "$($hash.Hash.ToLower())  $(Split-Path $out -Leaf)" | Out-File "$out.sha256" -Encoding ASCII
+
+      - name: Upload build artifact (for CI debugging)
+        uses: actions/upload-artifact@v4
+        with:
+          name: obsidenc-windows-x86_64-${{ github.ref_name }}
+          path: |
+            dist\*_windows-x86_64.exe
+
+      - name: Create GitHub Release and upload asset
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        with:
+          files: |
+            dist\*_windows-x86_64.exe
+            dist\*_windows-x86_64.exe.sha256
+          draft: false
+          prerelease: false
+
+
