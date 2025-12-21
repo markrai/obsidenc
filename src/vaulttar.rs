@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 /// Open a file for reading with O_NOATIME flag to prevent access time updates.
 /// Falls back to normal open if we don't have sufficient privileges (EPERM).
 /// This preserves privacy by not updating atime, which could reveal when files were accessed.
-#[cfg(unix)]
+#[cfg(all(target_family="unix", not(target_os="freebsd")))]
 fn open_file_noatime(path: &Path) -> Result<File, Error> {
     use std::os::unix::fs::OpenOptionsExt;
     
@@ -26,7 +26,7 @@ fn open_file_noatime(path: &Path) -> Result<File, Error> {
 }
 
 /// Open a file for reading (Windows doesn't have atime, so just open normally).
-#[cfg(not(unix))]
+#[cfg(any(target_os="freebsd", not(target_family="unix")))]
 fn open_file_noatime(path: &Path) -> Result<File, Error> {
     File::open(path).map_err(Into::into)
 }
