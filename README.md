@@ -2,7 +2,6 @@
 
 
 # obsidenc v1.0.4
-
 Paranoid-grade encryption utility. It tars a directory (no compression) and encrypts/decrypts it with Argon2id (RFC 9106 guidance) + XChaCha20-Poly1305. See [ANALYSIS.md](./ANALYSIS.md) for full details.
 
 ## Building
@@ -87,7 +86,13 @@ cargo tauri dev
 cargo tauri build
 ```
 
-GUI version is defined in `gui/src-tauri/tauri.conf.json` (`version`). After bumping it, run `node scripts/sync-version.js` from `gui/` so `gui/src-tauri/Cargo.toml` matches (needed for `get_version` / `CARGO_PKG_VERSION`).
+Project version is defined in the root [`Cargo.toml`](./Cargo.toml) (`version`, used by `obsidenc --version`). After bumping it, run from the repo root:
+
+```sh
+node scripts/sync-versions.js
+```
+
+That aligns `gui/src-tauri/tauri.conf.json`, `gui/src-tauri/Cargo.toml`, and the README title. Verify with `node scripts/verify-versions.js`.
 
 ## Supply-chain security (release blockers)
 
@@ -115,6 +120,8 @@ cargo test --test roundtrip
 The test never modifies the original `tests/mock` data; it only creates and deletes `tests/test.oen` and `tests/decrypt/`.
 
 ## Fuzzing
+
+Fuzzing is maintainer/dev tooling; not required for end users.
 
 The project includes fuzzing infrastructure to verify robustness against malformed input. Fuzzing helps ensure that the decryption parser never panics on invalid data.
 
@@ -151,13 +158,13 @@ cargo fuzz run fuzz_decrypt
 
 **Note:** If you want to keep stable as your default toolchain, you can use `rustup override set nightly` in the project directory instead of `rustup default nightly`. This sets nightly only for this project.
 
-**Step 3: Let it run**
+**Step 4: Let it run**
 - The fuzzer will run indefinitely, generating random inputs
 - Press Ctrl+C to stop
 - If a panic is found, the fuzzer will save the input that caused it to `fuzz/artifacts/fuzz_decrypt/`
 - Check the output for any crashes or panics
 
-**Advanced options:**
+**Step 5: Advanced options**
 ```sh
 # Run with a timeout (e.g., 60 seconds)
 cargo fuzz run fuzz_decrypt -- -max_total_time=60

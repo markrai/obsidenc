@@ -74,3 +74,6 @@ run.bat
 staging/
 .obsidenc-staging-*/
 
+# Local drafts (not tracked)
+docs/draft/
+
