@@ -5,7 +5,7 @@
 - **Cross-platform GUI build:** Replaced PowerShell-based Tauri hooks with Node.js scripts (`gui/scripts/build-sidecar.js`, `gui/scripts/dev.js`) so `cargo tauri dev` / `cargo tauri build` work on Windows, macOS, and Linux when Node is on `PATH`. End users of release installers do not need Node.
 - **Version source of truth:** GUI version is defined in `gui/src-tauri/tauri.conf.json`. From `gui/`, run `node scripts/sync-version.js` after bumping it to align `gui/src-tauri/Cargo.toml` with `CARGO_PKG_VERSION` / `get_version`. Version is not mutated implicitly during build.
 - **README:** Clarifies that Node.js is required only for development and packaging, not for running a shipped build.
-- **Locale robustness:** Startup uses validated saved locale, strict system detection (`fr` vs `en`), and consistent fallback to English with `localStorage` updated when locale assets fail to load. Temporary `console.log` for saved / effective / system locale to aid debugging (remove when no longer needed).
+- **Locale fix (French UI):** Allow locale JSON fetch in CSP (`connect-src 'self'` plus dev-server origins). Harden locale loading with HTTP checks; preferences modal no longer freezes when a language switch fails; saved French preference is no longer silently reset to English on load failure. Removed temporary locale debug logging.
 
 ## v1.0.3
 

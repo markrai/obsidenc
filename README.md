@@ -1,7 +1,7 @@
 <img width="1250" height="273" alt="image" src="https://github.com/user-attachments/assets/adf5102d-b34a-447c-a826-88938be67ff3" />
 
 
-# obsidenc v1.0.3
+# obsidenc v1.0.4
 
 Paranoid-grade encryption utility. It tars a directory (no compression) and encrypts/decrypts it with Argon2id (RFC 9106 guidance) + XChaCha20-Poly1305. See [ANALYSIS.md](./ANALYSIS.md) for full details.
 

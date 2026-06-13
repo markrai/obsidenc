@@ -22,7 +22,7 @@
     ],
     "security": {
       "freezePrototype": true,
-      "csp": "default-src 'self'; img-src 'self' asset: data:; style-src 'self'; script-src 'self'; connect-src ipc: http://ipc.localhost;"
+      "csp": "default-src 'self'; img-src 'self' asset: data:; style-src 'self'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://localhost:1420 http://127.0.0.1:1420;"
     }
   },
   "bundle": {

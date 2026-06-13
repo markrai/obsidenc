@@ -53,6 +53,7 @@
   "status.decryptionSuccess": "Déchiffrement réussi : {{path}}",
   "status.decryptionFailed": "Échec du déchiffrement (code de sortie : {{code}})",
   "status.tauriUnavailable": "API Tauri non disponible (withGlobalTauri doit être activé).",
+  "status.localeLoadFailed": "Impossible d'appliquer la langue sélectionnée. La langue précédente a été conservée.",
   "dialog.selectVaultDir": "Sélectionner le répertoire du dépôt",
   "dialog.chooseOutputFile": "Choisir le fichier de sortie",
   "dialog.selectOutputFile": "Sélectionner le fichier de sortie",

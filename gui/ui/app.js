@@ -21,7 +21,32 @@ function t(key, params) {
 
 async function loadLocale(locale) {
   const r = await fetch("./locales/" + locale + ".json");
+  if (!r.ok) {
+    throw new Error(`Failed to load locale "${locale}": HTTP ${r.status}`);
+  }
   strings = await r.json();
+}
+
+async function initLocale(preferred, { persist = true } = {}) {
+  try {
+    await loadLocale(preferred);
+    applyLocale(preferred);
+    if (persist) {
+      localStorage.setItem(LOCALE_STORAGE_KEY, preferred);
+    }
+    return preferred;
+  } catch (_) {
+    if (preferred !== "en") {
+      try {
+        await loadLocale("en");
+        applyLocale("en");
+        return "en";
+      } catch (_) {
+        return preferred;
+      }
+    }
+    return preferred;
+  }
 }
 
 function getSupportedLocaleFromSystem() {
@@ -168,14 +193,19 @@ async function main() {
     prefsBtn && prefsBtn.focus();
   }
 
-  function savePreferencesAndClose() {
+  async function savePreferencesAndClose() {
     const next = prefsLanguage ? prefsLanguage.value : currentLocale;
     if (next && next !== currentLocale) {
-      localStorage.setItem(LOCALE_STORAGE_KEY, next);
-      loadLocale(next).then(() => {
+      try {
+        await loadLocale(next);
         applyLocale(next);
+        localStorage.setItem(LOCALE_STORAGE_KEY, next);
+      } catch (_) {
+        if (prefsLanguage) prefsLanguage.value = currentLocale;
+        setStatus(t("status.localeLoadFailed"), "error");
+      } finally {
         closePreferences();
-      });
+      }
     } else {
       closePreferences();
     }
@@ -436,29 +466,12 @@ async function main() {
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
-  const rawSaved = localStorage.getItem(LOCALE_STORAGE_KEY);
   let locale = getValidatedSavedLocale();
+  const isFirstRun = !locale;
   if (!locale) {
     locale = getSupportedLocaleFromSystem();
-    localStorage.setItem(LOCALE_STORAGE_KEY, locale);
   }
-  console.log("Locale:", {
-    saved: rawSaved,
-    effective: locale,
-    system: navigator.languages?.[0] || navigator.language,
-  });
-  try {
-    await loadLocale(locale);
-    applyLocale(locale);
-  } catch (e) {
-    try {
-      await loadLocale("en");
-      applyLocale("en");
-      localStorage.setItem(LOCALE_STORAGE_KEY, "en");
-    } catch (_) {
-      localStorage.setItem(LOCALE_STORAGE_KEY, "en");
-    }
-  }
+  await initLocale(locale, { persist: isFirstRun });
   const mainEl = document.getElementById("main-app");
   if (mainEl) mainEl.classList.add("ready");
   main().catch((e) => setStatus(String(e), "error"));
